@@ -12,6 +12,7 @@ public class Configurations
     public double evaporationIntensity;
     public int minDistance;
     public int maxDistance;
+    public int threadsCount;
 
     public Configurations()
     {
@@ -25,5 +26,6 @@ public class Configurations
         evaporationIntensity = 0.1;
         minDistance = 100;
         maxDistance = 1000;
+        threadsCount = 5;
     }
 }

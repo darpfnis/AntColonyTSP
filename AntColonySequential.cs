@@ -1,7 +1,4 @@
-﻿using System.Numerics;
-using AntColonyTSP;
-
-namespace AntColonyTSP;
+﻿namespace AntColonyTSP;
 
 public class AntColonySequential : AntColony
 {
@@ -22,15 +19,15 @@ public class AntColonySequential : AntColony
             for (var j = 0; j < Config.antCount; j++)
             {
                 var availableDirections = Enumerable.Range(1, Config.cityCount - 1).ToList();
-                var path = Enumerable.Repeat(0, Config.cityCount + 1).ToList();
+                var path = Enumerable.Repeat(0, Config.cityCount + 1).ToList(); 
                 
-                for (var k = 1; k < Config.cityCount; k++)
+                for (var k = 1; k < Config.cityCount; k++) 
                 {
                     var probabilityDistribution = CalculateProbabilityDistribution(path[k - 1], availableDirections, Config);
                     var probability = Operators.GetRandomDouble(0, 1);
                     var index = Operators.GetIndexByProbability(probabilityDistribution, probability);
                     path[k] = availableDirections[index];
-                    availableDirections.RemoveAt(index);
+                    availableDirections.RemoveAt(index); 
                 }
                 
                 paths[j].path = path;
