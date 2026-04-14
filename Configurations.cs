@@ -17,7 +17,7 @@ public class Configurations
     public Configurations()
     {
         iterations = 100;
-        antCount = 50;
+        antCount = 64;
         goal = 9000;
         startPheromone = 0.1;
         cityCount = 200;
@@ -26,6 +26,6 @@ public class Configurations
         evaporationIntensity = 0.1;
         minDistance = 100;
         maxDistance = 1000;
-        threadsCount = 5;
+        threadsCount = 8;
     }
 }

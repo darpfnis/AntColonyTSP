@@ -8,8 +8,8 @@ namespace AntColonyTSP
     public class AntColonyTester
     {
         private Configurations _configs;
-        private const int RunsPerTest = 3;
-        private readonly int[] _citySizes = { 10, 50, 100, 500, 1000 };
+        private const int RunsPerTest = 5;
+        private readonly int[] _citySizes = { 10, 50, 100, 500, 1000, 3000};
         private readonly int[] _threadCounts = { 2, 4, 8 };
 
         public void RunTests()
