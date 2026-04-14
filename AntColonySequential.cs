@@ -51,7 +51,7 @@ public class AntColonySequential : AntColony
                 ApplyPheromoneFromPath(path);
             }
 
-            Console.WriteLine("Iteration " + i + " best result: " + paths[bestPath].distance);
+            // Console.WriteLine("Iteration " + i + " best result: " + paths[bestPath].distance);
         }
         
         return paths[bestPath];

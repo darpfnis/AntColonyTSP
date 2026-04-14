@@ -2,7 +2,7 @@
 
 public class AntColony
 {
-    private readonly int[,] _adjacencyMatrix;
+    protected readonly int[,] _adjacencyMatrix;
     protected double[,] _pheromoneMatrix;
     protected Configurations Config;
 
