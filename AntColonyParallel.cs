@@ -2,159 +2,155 @@
 
 public class AntColonyParallel : AntColony
 {
-    private readonly ParallelOptions _parallelOptions;
+    // Кожен потік має свій Random без contention
+    private static readonly ThreadLocal<Random> _threadRandom =
+        new ThreadLocal<Random>(() => new Random(Guid.NewGuid().GetHashCode()));
 
     public AntColonyParallel(int[,] adjacencyMatrix, double[,] pheromoneMatrix, Configurations configurations)
         : base(adjacencyMatrix, pheromoneMatrix, configurations)
     {
-        _parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = Config.threadsCount };
     }
 
     public AntPath Solve()
     {
-        var paths = new AntPath[Config.antCount];
         AntPath? globalBestPath = null;
+        var lockObject = new object();
+        var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = Config.threadsCount };
+        var size = Config.cityCount;
 
-        ApplyToMatrix(Config.startPheromone, (current, value) => value);
+        ApplyToMatrix(Config.startPheromone, (_, value) => value);
 
-        for (var iteration = 0; iteration < Config.iterations; iteration++)
+        for (var i = 0; i < Config.iterations; i++)
         {
-            // Фаза 1: кожна мурашка будує свій шлях незалежно — чиста паралельність
-            Parallel.For(0, Config.antCount, _parallelOptions, j =>
+            // Кожен потік збирає свій delta без lock на запис феромонів
+            var deltaMatrices = new double[Config.threadsCount][,];
+            for (int t = 0; t < Config.threadsCount; t++)
+                deltaMatrices[t] = new double[size, size];
+
+            var foundGoal = false;
+            AntPath? iterationBest = null;
+
+            Parallel.For(0, Config.antCount, parallelOptions,
+                () => (localBest: new AntPath { distance = int.MaxValue }, 
+                       delta: deltaMatrices[Environment.CurrentManagedThreadId % Config.threadsCount]),
+                (j, state, local) =>
+                {
+                    if (state.IsStopped) return local;
+
+                    var rng = _threadRandom.Value!;
+
+                    // Swap-and-shrink замість List.RemoveAt, O(1) видалення
+                    var dirs = new int[size - 1];
+                    for (int c = 0; c < size - 1; c++) dirs[c] = c + 1;
+                    var dirsCount = size - 1;
+
+                    var path = new int[size + 1];
+                    // path[0] = 0 за замовчуванням
+
+                    for (var k = 1; k < size; k++)
+                    {
+                        var dirSpan = dirs.AsSpan(0, dirsCount);
+                        var distribution = CalculateProbabilityDistributionSpan(path[k - 1], dirSpan);
+                        var probability = rng.NextDouble();
+                        var index = GetIndexByProbability(distribution, probability);
+
+                        path[k] = dirSpan[index];
+
+                        // O(1) свапаємо з останнім і зменшуємо лічильник
+                        dirs[index] = dirs[--dirsCount];
+                    }
+                    path[size] = 0;
+
+                    var distance = EvaluateAntPathArray(path);
+
+                    if (distance <= Config.goal)
+                    {
+                        local.localBest = new AntPath { path = path.ToList(), distance = distance };
+                        state.Stop();
+                        return local;
+                    }
+
+                    // Записуємо delta феромонів у локальну матрицю потоку 
+                    var contribution = (double)Config.goal / distance;
+                    for (var p = 0; p < size; p++)
+                        local.delta[path[p], path[p + 1]] += contribution;
+
+                    if (distance < local.localBest.distance)
+                        local.localBest = new AntPath { path = path.ToList(), distance = distance };
+
+                    return local;
+                },
+                (finalLocal) =>
+                {
+                    lock (lockObject)
+                    {
+                        if (globalBestPath == null || finalLocal.localBest.distance < globalBestPath.distance)
+                            globalBestPath = finalLocal.localBest;
+                        if (finalLocal.localBest.distance <= Config.goal)
+                            foundGoal = true;
+                    }
+                }
+            );
+
+            if (foundGoal && globalBestPath != null)
+                return globalBestPath;
+
+            // Паралельне випаровування по рядках матриці
+            var evapFactor = 1.0 - Config.evaporationIntensity;
+            Parallel.For(0, size, parallelOptions, row =>
             {
-                paths[j] = BuildAntPath();
+                for (var col = 0; col < size; col++)
+                {
+                    if (row == col) continue;
+                    var pheromone = _pheromoneMatrix[row, col] * evapFactor;
+
+                    // Merge усіх delta-матриць для цієї комірки
+                    for (var t = 0; t < Config.threadsCount; t++)
+                        pheromone += deltaMatrices[t][row, col];
+
+                    _pheromoneMatrix[row, col] = pheromone;
+                }
             });
-
-            // Фаза 2: знаходимо найкращий шлях ітерації
-            foreach (var path in paths)
-            {
-                if (globalBestPath == null || path.distance < globalBestPath.distance)
-                    globalBestPath = path;
-
-                if (path.distance <= Config.goal)
-                    return path;
-            }
-
-            // Фаза 3: паралельне випаровування — матриця розбивається по рядках
-            EvaporatePheromonesParallel();
-
-            // Фаза 4: паралельне накопичення феромонів через локальні матриці
-            ApplyPheromonesParallel(paths);
         }
 
-        return globalBestPath ?? paths[0];
+        return globalBestPath ?? new AntPath();
     }
 
-    // Будує один повний шлях для однієї мурашки.
-    // Використовує масиви замість List щоб уникнути зайвих алокацій.
-    private AntPath BuildAntPath()
+    // Версія з Span( уникає алокацій List кожної ітерації )
+    private double[] CalculateProbabilityDistributionSpan(int from, Span<int> dirs)
     {
-        // Масив доступних міст — імітуємо видалення через swap з кінцем
-        var available = new int[Config.cityCount - 1];
-        for (var i = 0; i < available.Length; i++)
-            available[i] = i + 1;
-
-        var path = new int[Config.cityCount + 1];
-        var remainingCount = available.Length;
-
-        for (var step = 1; step < Config.cityCount; step++)
-        {
-            var from = path[step - 1];
-            var chosenIndex = ChooseNextCity(from, available, remainingCount);
-
-            path[step] = available[chosenIndex];
-
-            // Swap-and-shrink: O(1) замість O(N) RemoveAt
-            available[chosenIndex] = available[remainingCount - 1];
-            remainingCount--;
-        }
-
-        return new AntPath
-        {
-            path = path.ToList(),
-            distance = EvaluateAntPath(path.ToList())
-        };
-    }
-
-    // Вибирає наступне місто за розподілом імовірностей.
-    // Не виділяє List — рахує все на місці.
-    private int ChooseNextCity(int from, int[] available, int count)
-    {
+        var probs = new double[dirs.Length];
         double total = 0;
-        for (var i = 0; i < count; i++)
+
+        for (var i = 0; i < dirs.Length; i++)
         {
-            var to = available[i];
-            total +=
-                Math.Pow(_pheromoneMatrix[from, to], Config.pheromoneImportance) *
-                Math.Pow(1.0 / _adjacencyMatrix[from, to], Config.distanceImportance);
+            var to = dirs[i];
+            probs[i] = Math.Pow(_pheromoneMatrix[from, to], Config.pheromoneImportance) *
+                       Math.Pow(1.0 / _adjacencyMatrix[from, to], Config.distanceImportance);
+            total += probs[i];
         }
 
-        var threshold = Operators.GetRandomDouble(0, total);
-        double cumulative = 0;
+        double sum = 0;
+        for (var i = 0; i < probs.Length; i++)
+            probs[i] = (sum += probs[i] / total);
+        probs[^1] = 1.0;
 
-        for (var i = 0; i < count - 1; i++)
-        {
-            var to = available[i];
-            cumulative +=
-                Math.Pow(_pheromoneMatrix[from, to], Config.pheromoneImportance) *
-                Math.Pow(1.0 / _adjacencyMatrix[from, to], Config.distanceImportance);
-
-            if (cumulative >= threshold)
-                return i;
-        }
-
-        return count - 1;
+        return probs;
     }
 
-    // Паралельне випаровування: кожен потік обробляє свій діапазон рядків.
-    private void EvaporatePheromonesParallel()
+    private static int GetIndexByProbability(double[] dist, double p)
     {
-        var size = _pheromoneMatrix.GetLength(0);
-        var retention = 1.0 - Config.evaporationIntensity;
-
-        Parallel.For(0, size, _parallelOptions, i =>
-        {
-            for (var j = 0; j < size; j++)
-            {
-                if (i != j)
-                    _pheromoneMatrix[i, j] *= retention;
-            }
-        });
+        for (var i = 0; i < dist.Length; i++)
+            if (p <= dist[i]) return i;
+        return dist.Length - 1;
     }
 
-    // Паралельне накопичення феромонів: кожен потік будує локальну матрицю дельт,
-    // після чого всі дельти додаються до спільної матриці одним паралельним проходом.
-    private void ApplyPheromonesParallel(AntPath[] paths)
+    // Версія з масивом замість List
+    private int EvaluateAntPathArray(int[] path)
     {
-        var size = _pheromoneMatrix.GetLength(0);
-
-        // Кожен потік пише у власну матрицю — без конкуренції
-        var threadDeltas = new double[Config.threadsCount][,];
-        for (var t = 0; t < Config.threadsCount; t++)
-            threadDeltas[t] = new double[size, size];
-
-        Parallel.For(0, Config.antCount, _parallelOptions, j =>
-        {
-            var threadIndex = j % Config.threadsCount;
-            var delta = threadDeltas[threadIndex];
-            var path = paths[j];
-            var deposit = Config.goal * 1.0 / path.distance;
-
-            for (var k = 0; k < path.path.Count - 1; k++)
-                delta[path.path[k], path.path[k + 1]] += deposit;
-        });
-
-        // Зливаємо дельти в спільну матрицю — паралельно по рядках
-        Parallel.For(0, size, _parallelOptions, i =>
-        {
-            for (var j = 0; j < size; j++)
-            {
-                if (i == j) continue;
-                double sum = 0;
-                for (var t = 0; t < Config.threadsCount; t++)
-                    sum += threadDeltas[t][i, j];
-                _pheromoneMatrix[i, j] += sum;
-            }
-        });
+        var d = 0;
+        for (var i = 0; i < path.Length - 1; i++)
+            d += _adjacencyMatrix[path[i], path[i + 1]];
+        return d;
     }
 }
