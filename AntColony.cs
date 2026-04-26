@@ -1,64 +1,76 @@
-﻿namespace AntColonyTSP;
+namespace AntColonyTSP;
 
-public class AntColony
+internal readonly record struct TourResult(int Distance, int Cost, double Objective, bool Ok);
+
+internal static class AntColony
 {
-    protected readonly int[,] _adjacencyMatrix;
-    protected double[,] _pheromoneMatrix;
-    protected Configurations Config;
-
-    protected AntColony(int[,] adjacencyMatrix, double[,] pheromoneMatrix, Configurations configurations)
+    internal static double ArcWeight(Arc a, Configurations cfg)
     {
-        _adjacencyMatrix = adjacencyMatrix;
-        _pheromoneMatrix = pheromoneMatrix;
-        Config = configurations;
+        var invD = 1.0 / a.Dist;
+        var invC = a.Cost > 0 ? 1.0 / a.Cost : 1.0;
+        return Math.Pow(a.Tau, cfg.PheromoneImportance)
+               * Math.Pow(invD, cfg.DistanceImportance)
+               * Math.Pow(invC, cfg.CostImportance);
     }
-    
-    protected int EvaluateAntPath(List<int> path)
+
+    internal static int PickWeightedIndex(Span<double> w, int m, double u)
     {
-        var distance = 0;
-        for (var i = 0; i < path.Count - 1; i++)
+        double tot = 0;
+        for (var i = 0; i < m; i++)
+            tot += w[i];
+        if (tot <= 0)
+            return Random.Shared.Next(m);
+        var inv = 1.0 / tot;
+        double acc = 0;
+        var last = m - 1;
+        for (var i = 0; i < last; i++)
         {
-            distance += _adjacencyMatrix[path[i], path[i + 1]];
+            acc += w[i] * inv;
+            if (u < acc)
+                return i;
         }
-        return distance;
-    }
-    
-    protected List<double> CalculateProbabilityDistribution(int startingPoint, List<int> availableDirections, Configurations configurations)
-    {
-        var directionProbability = availableDirections
-            .Select(direction => 
-                Math.Pow(_pheromoneMatrix[startingPoint, direction], configurations.pheromoneImportance) *
-                Math.Pow(1.0 / _adjacencyMatrix[startingPoint, direction], configurations.distanceImportance))
-            .ToList();
-
-        var totalProbability = directionProbability.Sum();
-        directionProbability = directionProbability.Select(p => p / totalProbability).ToList();
-        
-        double sum = 0;
-        var probabilityDistribution = directionProbability.Select(p => sum += p).ToList();
-        probabilityDistribution[^1] = 1.0;
-        
-        return probabilityDistribution;
+        return last;
     }
 
-    protected void ApplyToMatrix(double operand, Func<double, double, double> operation)
+    internal static TourResult SimulateAnt(int n, TspGraph g, Configurations cfg, int[] dirs, int[] path,
+        double[] scratch, int[] cand, Random rng)
     {
-        var size = _pheromoneMatrix.GetLength(0);
-        for (var i = 0; i < size; i++)
+        for (var c = 0; c < n - 1; c++)
+            dirs[c] = c + 1;
+        var dirsCount = n - 1;
+        path[0] = 0;
+        for (var k = 1; k < n; k++)
         {
-            for (var j = 0; j < size; j++)
+            var u = path[k - 1];
+            var m = 0;
+            for (var i = 0; i < dirsCount; i++)
             {
-                if (i == j) continue;
-                _pheromoneMatrix[i, j] = operation(_pheromoneMatrix[i, j], operand);
+                var v = dirs[i];
+                if (!g.TryArc(u, v, out var a))
+                    continue;
+                cand[m] = i;
+                scratch[m] = ArcWeight(a!, cfg);
+                m++;
             }
+            if (m == 0)
+                return new TourResult(0, 0, double.PositiveInfinity, false);
+            var pick = PickWeightedIndex(scratch.AsSpan(0, m), m, rng.NextDouble());
+            var ix = cand[pick];
+            path[k] = dirs[ix];
+            dirs[ix] = dirs[--dirsCount];
         }
+        path[n] = 0;
+        if (!g.TryArc(path[n - 1], 0, out _))
+            return new TourResult(0, 0, double.PositiveInfinity, false);
+        var span = path.AsSpan(0, n + 1);
+        if (!g.TryPathMetrics(span, n + 1, out var dist, out var cost))
+            return new TourResult(0, 0, double.PositiveInfinity, false);
+        var obj = g.PathObjective(span, n + 1, cfg.PathWeightDistance, cfg.PathWeightCost);
+        return new TourResult(dist, cost, obj, true);
     }
 
-    protected void ApplyPheromoneFromPath(AntPath antPath)
-    {
-        for (var i = 0; i < antPath.path.Count - 1; i++)
-        {
-            _pheromoneMatrix[antPath.path[i], antPath.path[i + 1]] += Config.goal * 1.0 / antPath.distance;
-        }
-    }
+    internal static bool MeetsGoal(TourResult r, Configurations cfg) => r.Ok && r.Objective <= cfg.Goal;
+
+    internal static double DepositQ(TourResult r, Configurations cfg) =>
+        (double)cfg.Goal / Math.Max(1e-12, r.Objective);
 }

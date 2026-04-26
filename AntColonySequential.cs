@@ -1,59 +1,67 @@
-﻿namespace AntColonyTSP;
+using System.Buffers;
 
-public class AntColonySequential : AntColony
+namespace AntColonyTSP;
+
+public sealed class AntColonySequential
 {
-    public AntColonySequential(int[,] adjacencyMatrix, double[,] pheromoneMatrix, Configurations configurations)
-        : base(adjacencyMatrix, pheromoneMatrix, configurations)
+    readonly Configurations _cfg;
+    readonly TspGraph _g;
+    readonly double[] _deposit;
+
+    public AntColonySequential(TspGraph graph, Configurations cfg)
     {
+        _g = graph;
+        _cfg = cfg;
+        _deposit = new double[graph.EdgeCount];
     }
-    
+
     public AntPath Solve()
     {
-        var paths = Enumerable.Range(0, Config.antCount).Select(_ => new AntPath()).ToList();
-        var bestPath = 0;
-        ApplyToMatrix(Config.startPheromone, (current, value) => value);
-        
-        for (var i = 0; i < Config.iterations; i++)
+        var n = _cfg.CityCount;
+        var poolI = ArrayPool<int>.Shared;
+        var poolD = ArrayPool<double>.Shared;
+        var dirs = poolI.Rent(n);
+        var path = poolI.Rent(n + 1);
+        var cand = poolI.Rent(n);
+        var scratch = poolD.Rent(n);
+        var best = new AntPath { Distance = int.MaxValue, Objective = double.MaxValue, Nodes = new int[n + 1] };
+        try
         {
-            bestPath = 0;
-            for (var j = 0; j < Config.antCount; j++)
+            _g.ResetTau(_cfg.StartPheromone);
+            for (var it = 0; it < _cfg.Iterations; it++)
             {
-                var availableDirections = Enumerable.Range(1, Config.cityCount - 1).ToList();
-                var path = Enumerable.Repeat(0, Config.cityCount + 1).ToList(); 
-                
-                for (var k = 1; k < Config.cityCount; k++) 
+                Array.Clear(_deposit);
+                for (var a = 0; a < _cfg.AntCount; a++)
                 {
-                    var probabilityDistribution = CalculateProbabilityDistribution(path[k - 1], availableDirections, Config);
-                    var probability = Operators.GetRandomDouble(0, 1);
-                    var index = Operators.GetIndexByProbability(probabilityDistribution, probability);
-                    path[k] = availableDirections[index];
-                    availableDirections.RemoveAt(index); 
+                    var r = AntColony.SimulateAnt(n, _g, _cfg, dirs, path, scratch, cand, Random.Shared);
+                    if (!r.Ok)
+                        continue;
+                    var q = AntColony.DepositQ(r, _cfg);
+                    _g.AddPathDelta(path.AsSpan(0, n + 1), n + 1, q, _deposit);
+                    if (AntColony.MeetsGoal(r, _cfg))
+                    {
+                        var nodes = new int[n + 1];
+                        path.AsSpan(0, n + 1).CopyTo(nodes);
+                        return new AntPath { Nodes = nodes, Distance = r.Distance, Cost = r.Cost, Objective = r.Objective };
+                    }
+                    if (r.Ok && r.Objective < best.Objective)
+                    {
+                        best.Distance = r.Distance;
+                        best.Cost = r.Cost;
+                        best.Objective = r.Objective;
+                        path.AsSpan(0, n + 1).CopyTo(best.Nodes);
+                    }
                 }
-                
-                paths[j].path = path;
-                paths[j].distance = EvaluateAntPath(path);
-
-                if (paths[j].distance <= Config.goal)
-                {
-                    return paths[j];
-                }
-
-                if (paths[j].distance < paths[bestPath].distance)
-                {
-                    bestPath = j;
-                }
+                _g.EvaporateAndAdd(1.0 - _cfg.EvaporationIntensity, _deposit);
             }
-
-            ApplyToMatrix(1 - Config.evaporationIntensity, (current, value) => current * value);
-
-            foreach (var path in paths)
-            {
-                ApplyPheromoneFromPath(path);
-            }
-
-            // Console.WriteLine("Iteration " + i + " best result: " + paths[bestPath].distance);
+            return best;
         }
-        
-        return paths[bestPath];
+        finally
+        {
+            poolI.Return(dirs);
+            poolI.Return(path);
+            poolI.Return(cand);
+            poolD.Return(scratch);
+        }
     }
 }

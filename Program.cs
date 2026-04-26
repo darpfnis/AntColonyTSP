@@ -1,10 +1,11 @@
-﻿using AntColonyTSP;
+using AntColonyTSP;
 
 public class Program
 {
-    public static void Main(string[] args)
+    public static void Main()
     {
-        var tester = new AntColonyTester();
-        tester.RunTests();
+        TspGraph.PrintSampleExample();
+        Console.WriteLine();
+        new AntColonyTester().RunTests();
     }
 }

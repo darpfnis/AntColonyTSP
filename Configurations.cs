@@ -1,31 +1,21 @@
-﻿namespace AntColonyTSP;
+namespace AntColonyTSP;
 
-public class Configurations
+public sealed class Configurations
 {
-    public int iterations;
-    public int antCount;
-    public int goal;
-    public double startPheromone;
-    public int cityCount;
-    public double distanceImportance;
-    public double pheromoneImportance;
-    public double evaporationIntensity;
-    public int minDistance;
-    public int maxDistance;
-    public int threadsCount;
-
-    public Configurations()
-    {
-        iterations = 100;
-        antCount = 64;
-        goal = 9000;
-        startPheromone = 0.1;
-        cityCount = 200;
-        distanceImportance = 2;
-        pheromoneImportance = 1;
-        evaporationIntensity = 0.1;
-        minDistance = 100;
-        maxDistance = 1000;
-        threadsCount = 8;
-    }
+    public int Iterations = 100;
+    public int AntCount = 64;
+    public int Goal = 9000;
+    public double StartPheromone = 0.1;
+    public int CityCount = 200;
+    public double DistanceImportance = 2;
+    public double PheromoneImportance = 1;
+    public double CostImportance;
+    public double PathWeightDistance = 1;
+    public double PathWeightCost;
+    public double EvaporationIntensity = 0.1;
+    public int MinDistance = 100;
+    public int MaxDistance = 1000;
+    public int MinCost = 10;
+    public int MaxCost = 500;
+    public int ThreadsCount = 8;
 }
