@@ -1,0 +1,15 @@
+namespace AntColonyTSP;
+
+public class Path
+{
+    public int distance { get; set; }
+    public int cost { get; set; }
+    public double pheromone { get; set; }
+
+    public Path(int distance, int cost, double pheromone)
+    {
+        this.distance = distance;
+        this.cost = cost;
+        this.pheromone = pheromone;
+    }
+}
