@@ -1,9 +1,17 @@
 namespace AntColonyTSP;
 
-public sealed class AntPath
+public class AntPath
 {
-    public int[] Nodes = Array.Empty<int>();
-    public int Distance;
-    public int Cost;
-    public double Objective = double.MaxValue;
+    public List<int> path { get; set; }
+    public int distance { get; set; }
+    public int cost { get; set; }
+    public double objectiveValue { get; set; }
+
+    public AntPath()
+    {
+        path = new List<int>();
+        distance = 0;
+        cost = 0;
+        objectiveValue = 0;
+    }
 }
