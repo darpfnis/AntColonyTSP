@@ -2,10 +2,9 @@ using AntColonyTSP;
 
 public class Program
 {
-    public static void Main()
+    public static void Main(string[] args)
     {
-        TspGraph.PrintSampleExample();
-        Console.WriteLine();
-        new AntColonyTester().RunTests();
+        var tester = new AntColonyTester();
+        tester.RunTests();
     }
 }
