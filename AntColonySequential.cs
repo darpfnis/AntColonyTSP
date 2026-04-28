@@ -1,67 +1,84 @@
-using System.Buffers;
-
 namespace AntColonyTSP;
 
-public sealed class AntColonySequential
+public class AntColonySequential : AntColony
 {
-    readonly Configurations _cfg;
-    readonly TspGraph _g;
-    readonly double[] _deposit;
-
-    public AntColonySequential(TspGraph graph, Configurations cfg)
+    public AntColonySequential(Path?[,] adjacencyMatrix, Configurations configurations)
+        : base(adjacencyMatrix, configurations)
     {
-        _g = graph;
-        _cfg = cfg;
-        _deposit = new double[graph.EdgeCount];
     }
 
     public AntPath Solve()
     {
-        var n = _cfg.CityCount;
-        var poolI = ArrayPool<int>.Shared;
-        var poolD = ArrayPool<double>.Shared;
-        var dirs = poolI.Rent(n);
-        var path = poolI.Rent(n + 1);
-        var cand = poolI.Rent(n);
-        var scratch = poolD.Rent(n);
-        var best = new AntPath { Distance = int.MaxValue, Objective = double.MaxValue, Nodes = new int[n + 1] };
-        try
+        var paths = Enumerable.Range(0, Config.antCount).Select(_ => new AntPath()).ToList();
+        var bestPathIndex = 0;
+        ApplyToMatrix(Config.startPheromone, (current, value) => value);
+
+        for (var i = 0; i < Config.iterations; i++)
         {
-            _g.ResetTau(_cfg.StartPheromone);
-            for (var it = 0; it < _cfg.Iterations; it++)
+            for (var j = 0; j < Config.antCount; j++)
             {
-                Array.Clear(_deposit);
-                for (var a = 0; a < _cfg.AntCount; a++)
+                var currentCity = 0;
+                var unvisited = Enumerable.Range(1, Config.cityCount - 1).ToList();
+                var path = new List<int> { currentCity };
+
+                while (unvisited.Count > 0)
                 {
-                    var r = AntColony.SimulateAnt(n, _g, _cfg, dirs, path, scratch, cand, Random.Shared);
-                    if (!r.Ok)
-                        continue;
-                    var q = AntColony.DepositQ(r, _cfg);
-                    _g.AddPathDelta(path.AsSpan(0, n + 1), n + 1, q, _deposit);
-                    if (AntColony.MeetsGoal(r, _cfg))
+                    var reachableDirections = unvisited
+                        .Where(targetCity => _adjacencyMatrix[currentCity, targetCity] != null)
+                        .ToList();
+
+                    if (reachableDirections.Count == 0)
                     {
-                        var nodes = new int[n + 1];
-                        path.AsSpan(0, n + 1).CopyTo(nodes);
-                        return new AntPath { Nodes = nodes, Distance = r.Distance, Cost = r.Cost, Objective = r.Objective };
+                        path.Clear();
+                        break;
                     }
-                    if (r.Ok && r.Objective < best.Objective)
+
+                    var probabilityDistribution =
+                        CalculateProbabilityDistribution(currentCity, reachableDirections, Config);
+                    var probability = Random.Shared.NextDouble();
+                    var index = Operators.GetIndexByProbability(probabilityDistribution, probability);
+
+                    var nextCity = reachableDirections[index];
+                    path.Add(nextCity);
+                    unvisited.Remove(nextCity);
+                    currentCity = nextCity;
+                }
+
+                if (path.Count > 0 && _adjacencyMatrix[currentCity, 0] != null)
+                {
+                    path.Add(0);
+                    var (dist, cost) = EvaluateAntPath(path);
+    
+                    paths[j].path = path;
+                    paths[j].distance = dist;
+                    paths[j].cost = cost;
+    
+                    paths[j].objectiveValue = (Config.distanceImportance * dist) + (Config.costImportance * cost);
+
+                    if (dist <= Config.goalDistance && cost <= Config.goalCost)
                     {
-                        best.Distance = r.Distance;
-                        best.Cost = r.Cost;
-                        best.Objective = r.Objective;
-                        path.AsSpan(0, n + 1).CopyTo(best.Nodes);
+                        return paths[j];
+                    }
+
+                    if (paths[bestPathIndex].distance == int.MaxValue || 
+                        paths[j].objectiveValue < paths[bestPathIndex].objectiveValue)
+                    {
+                        bestPathIndex = j;
                     }
                 }
-                _g.EvaporateAndAdd(1.0 - _cfg.EvaporationIntensity, _deposit);
+                else
+                {
+                    paths[j].distance = int.MaxValue;
+                }
             }
-            return best;
+
+            ApplyToMatrix(1 - Config.evaporationIntensity, (current, value) => current * value);
+            foreach (var path in paths.Where(p => p.distance < int.MaxValue))
+            {
+                ApplyPheromoneFromPath(path);
+            }
         }
-        finally
-        {
-            poolI.Return(dirs);
-            poolI.Return(path);
-            poolI.Return(cand);
-            poolD.Return(scratch);
-        }
+
+        return paths[bestPathIndex];
     }
 }
