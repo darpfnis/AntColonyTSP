@@ -6,7 +6,7 @@ namespace AntColonyTSP;
 
 public sealed class AntColonyTester
 {
-    const int RunsPerConfig = 7;
+    const int RunsPerConfig = 3;
     const int W = 15;
     static readonly int[] ThreadCounts = { 1, 2, 4, 6, 8, 12 };
     static readonly int[] TableParallelP = { 2, 4, 6, 8, 12 };

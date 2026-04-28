@@ -1,7 +1,11 @@
+using System;
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Threading;
 
 namespace AntColonyTSP;
 
@@ -30,21 +34,17 @@ public sealed class AntColonyParallel
         var best = new AntPath { Distance = int.MaxValue, Cost = int.MaxValue, Objective = double.MaxValue, Nodes = new int[n + 1] };
         var bestLock = new object();
         
-        // ThreadLocal гарантує унікальний буфер на потік
-        var deltaBag = new ConcurrentBag<double[]>();
-        using var tls = new ThreadLocal<double[]>(() =>
-        {
-            var buf = new double[eCount];
-            deltaBag.Add(buf);
-            return buf;
-        });
+        using var tls = new ThreadLocal<double[]>(
+            valueFactory: () => new double[eCount], 
+            trackAllValues: true 
+        );
         
         _g.ResetTau(_cfg.StartPheromone);
         double sumAnt = 0, sumMerge = 0;
         
         for (var it = 0; it < _cfg.Iterations; it++)
         {
-            foreach (var b in deltaBag)
+            foreach (var b in tls.Values)
                 Array.Clear(b);
             
             var goalFound = 0;
@@ -136,8 +136,10 @@ public sealed class AntColonyParallel
             }
             
             var swM = Stopwatch.StartNew();
-            var deltas = deltaBag.ToList();
+            
+            var deltas = tls.Values.ToList(); 
             _g.EvaporateAndAdd(1.0 - _cfg.EvaporationIntensity, deltas);
+            
             swM.Stop();
             sumMerge += swM.Elapsed.TotalMilliseconds;
         }
@@ -147,11 +149,9 @@ public sealed class AntColonyParallel
         return best;
     }
 
-    // Оптимізована версія SimulateAnt для повного графа
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     TourResult SimulateAntOptimized(int n, int[] dirs, int[] path, double[] scratch, int[] cand, Random rng)
     {
-        // Ініціалізація доступних міст
         for (var c = 0; c < n - 1; c++)
             dirs[c] = c + 1;
         var dirsCount = n - 1;
@@ -163,15 +163,20 @@ public sealed class AntColonyParallel
             var u = path[k - 1];
             var m = 0;
             
-            // Для повного графа дуга завжди існує - без TryArc!
             for (var i = 0; i < dirsCount; i++)
             {
                 var v = dirs[i];
-                var a = _g.Arc(u, v); // Прямий доступ без перевірки
+                
+                if (!_g.TryArc(u, v, out var a))
+                    continue; 
+                
                 cand[m] = i;
-                scratch[m] = ArcWeightInlined(a);
+                scratch[m] = ArcWeightInlined(a!);
                 m++;
             }
+            
+            if (m == 0)
+                return new TourResult(0, 0, double.PositiveInfinity, false);
             
             var pick = PickWeightedIndexInlined(scratch, m, rng.NextDouble());
             var ix = cand[pick];
